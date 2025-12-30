@@ -56,10 +56,8 @@ namespace Semantic
                     }
                 }
 
-                // Простая проверка для ( LITERAL OP LITERAL )
                 if (i + 1 < tables.lextable.size && tables.lextable.table[i + 1].lexema == LEX_LEFTHESIS)
                 {
-                    // Паттерн: / ( число оператор число )
                     if (i + 5 < tables.lextable.size &&
                         tables.lextable.table[i + 2].lexema == LEX_LITERAL &&
                         tables.lextable.table[i + 4].lexema == LEX_LITERAL &&
@@ -85,6 +83,24 @@ namespace Semantic
 
                 break;
             }
+            case LEX_EXCLAMATION:
+            {
+                if (i + 1 < tables.lextable.size &&
+                    (tables.lextable.table[i + 1].lexema == LEX_ID ||
+                        tables.lextable.table[i + 1].lexema == LEX_LITERAL) &&
+                    tables.lextable.table[i + 1].idxTI != NULLIDX_TI)
+                {
+                    IT::Entry& op = tables.idtable.table[tables.lextable.table[i + 1].idxTI];
+                    if (op.iddatatype != IT::IDDATATYPE::BOOL)
+                    {
+                        sem_ok = false;
+                        Log::writeError(log.stream, Error::GetError(318, tables.lextable.table[i].sn,0)
+                        );
+                    }
+                }
+                break;
+            }
+
             case LEX_EQUAL:
             {
                 if (i > 0 && tables.lextable.table[i - 1].idxTI != NULLIDX_TI)
@@ -138,7 +154,7 @@ namespace Semantic
                         if (lefttype == IT::IDDATATYPE::STR && !ignore)
                         {
                             char l = tables.lextable.table[k].lexema;
-                            if (l == LEX_MINUS || l == LEX_STAR || l == LEX_DIRSLASH || l == LEX_PLUS)
+                            if (l == LEX_MINUS || l == LEX_STAR || l == LEX_DIRSLASH || l == LEX_PLUS || l == LEX_PLUSPLUS || l == LEX_MINUSMINUS)
                             {
                                 Log::writeError(log.stream, Error::GetError(316, tables.lextable.table[k].sn, 0));
                                 sem_ok = false;

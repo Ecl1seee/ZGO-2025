@@ -11,6 +11,9 @@
 
 using namespace std;
 
+#define LEXEMA(i)  tables.lextable.table[i].lexema
+#define ITENTRY(i) tables.idtable.table[tables.lextable.table[i].idxTI]
+
 namespace Gener
 {
     static int labelCounter = 0;
@@ -34,7 +37,7 @@ namespace Gener
 
         stream << CONSTA;
 
-        // Выводим ВСЕ литералы
+        // Литералы
         for (int i = 0; i < idtable.size; i++)
         {
             IT::Entry e = idtable.table[i];
@@ -44,8 +47,6 @@ namespace Gener
             switch (e.iddatatype)
             {
             case IT::IDDATATYPE::INT:
-                stream << "dword " << e.value.vint;
-                break;
             case IT::IDDATATYPE::BOOL:
                 stream << "dword " << e.value.vint;
                 break;
@@ -56,6 +57,8 @@ namespace Gener
             }
             stream << "\n";
         }
+
+        stream << "\tdiv_zero_msg byte 'Division by zero',0\n";
 
         stream << DATA;
 
@@ -76,13 +79,25 @@ namespace Gener
             }
         }
 
+        // временная переменная для switch
+        stream << "\ttmp_switch_value dword 0\n";
+
         stream << CODE;
 
-        stream << "\n; ----------- ERROR HANDLER ------------\n";
+        stream << "\n; ----------- ERROR HANDLERS ------------\n";
         stream << "handle_negative PROC\n";
-        stream << "\txor eax, eax\n";  
+        stream << "\txor eax, eax\n";
         stream << "\tret\n";
         stream << "handle_negative ENDP\n";
+
+        // обработчик деления на ноль: выводит сообщение и завершает программу
+        stream << "handle_div_zero PROC\n";
+        stream << "\tpush offset div_zero_msg\n";
+        stream << "\tcall outrad\n";
+        stream << "\tpush 0\n";
+        stream << "\tcall ExitProcess\n";
+        stream << "\tret\n";
+        stream << "handle_div_zero ENDP\n";
     }
 
     string genEqualCode(Lexer::LEX& tables, int i)
@@ -90,7 +105,6 @@ namespace Gener
         string str;
         IT::Entry lval = ITENTRY(i - 1);
 
-        // Проверяем, что это числовой тип
         bool isNumericType = (lval.iddatatype == IT::IDDATATYPE::INT);
 
         for (int j = i + 1; LEXEMA(j) != LEX_SEMICOLON; j++)
@@ -110,7 +124,7 @@ namespace Gener
                         else
                             str += "\tpush " + mangleId(entry.id) + "\n";
                     }
-                    else // INT и BOOL
+                    else
                     {
                         str += "\tpush " + mangleId(entry.id) + "\n";
                     }
@@ -167,8 +181,8 @@ namespace Gener
                 str += "\tpop ebx\n\tpop eax\n\tsub eax, ebx\n";
                 if (isNumericType)
                 {
-                    str += "\tjns _positive_" + itoS(labelCounter) + "\n";  
-                    str += "\tcall handle_negative\n"; 
+                    str += "\tjns _positive_" + itoS(labelCounter) + "\n";
+                    str += "\tcall handle_negative\n";
                     str += "_positive_" + itoS(labelCounter++) + ":\n";
                 }
                 str += "\tpush eax\n";
@@ -179,7 +193,14 @@ namespace Gener
             }
             else if (lex == LEX_DIRSLASH)
             {
-                str += "\tpop ebx\n\tpop eax\n\txor edx, edx\n\tdiv ebx\n\tpush eax\n";
+                // деление с проверкой делителя на 0
+                str += "\tpop ebx\n";
+                str += "\tcmp ebx, 0\n";
+                str += "\tje handle_div_zero\n";
+                str += "\tpop eax\n";
+                str += "\txor edx, edx\n";
+                str += "\tdiv ebx\n";
+                str += "\tpush eax\n";
             }
             else if (lex == LEX_EXCLAMATION)
             {
@@ -222,7 +243,6 @@ namespace Gener
         for (int i = 0; i < tables.lextable.size; i++)
         {
             char lex = LEXEMA(i);
-            int idxTI = tables.lextable.table[i].idxTI;
 
             switch (lex)
             {
@@ -235,24 +255,26 @@ namespace Gener
                 stream << "\n; ----------- " << funcName << " ------------\n";
                 stream << funcName << " PROC";
 
-                vector<string> params;
-                for (int j = i + 3; LEXEMA(j) != LEX_RIGHTTHESIS; j++)
                 {
-                    if (LEXEMA(j) == LEX_ID)
+                    vector<string> params;
+                    for (int j = i + 3; LEXEMA(j) != LEX_RIGHTTHESIS; j++)
                     {
-                        IT::Entry param = ITENTRY(j);
-                        if (param.idtype == IT::IDTYPE::P)
-                            params.push_back(mangleId(param.id) + ":DWORD");
+                        if (LEXEMA(j) == LEX_ID)
+                        {
+                            IT::Entry param = ITENTRY(j);
+                            if (param.idtype == IT::IDTYPE::P)
+                                params.push_back(mangleId(param.id) + ":DWORD");
+                        }
                     }
-                }
 
-                for (size_t p = 0; p < params.size(); p++)
-                {
-                    if (p == 0) stream << " ";
-                    stream << params[p];
-                    if (p < params.size() - 1) stream << ", ";
+                    for (size_t p = 0; p < params.size(); p++)
+                    {
+                        if (p == 0) stream << " ";
+                        stream << params[p];
+                        if (p < params.size() - 1) stream << ", ";
+                    }
+                    stream << "\n";
                 }
-                stream << "\n";
                 break;
             }
 
@@ -341,12 +363,12 @@ namespace Gener
                     {
                         string checkLabel = makeLabel();
                         stream << "\tmov eax, " << varName << "\n";
-                        stream << "\ttest eax, eax\n";  
-                        stream << "\tjz " << checkLabel << "\n";  
+                        stream << "\ttest eax, eax\n";
+                        stream << "\tjz " << checkLabel << "\n";
                         stream << "\tdec " << varName << "\n";
                         stream << "\tjmp " << checkLabel << "_end\n";
                         stream << checkLabel << ":\n";
-                        stream << "\tcall handle_negative\n";  
+                        stream << "\tcall handle_negative\n";
                         stream << "\tmov " << varName << ", eax\n";
                         stream << checkLabel << "_end:\n";
                     }
@@ -365,7 +387,7 @@ namespace Gener
 
                 int exprStart = i + 2;
                 stream << "\tmov eax, " << mangleId(ITENTRY(exprStart).id) << "\n";
-                stream << "\tmov temp, eax\n";
+                stream << "\tmov tmp_switch_value, eax\n";
                 break;
             }
 
@@ -383,7 +405,7 @@ namespace Gener
                 if (i + 1 < tables.lextable.size)
                 {
                     IT::Entry caseVal = ITENTRY(i + 1);
-                    stream << "\tmov eax, temp\n";
+                    stream << "\tmov eax, tmp_switch_value\n";
                     stream << "\tcmp eax, " << mangleId(caseVal.id) << "\n";
                     stream << "\tje " << caseCodeLabel << "\n";
                     stream << "\tjmp " << nextLabel << "\n";
